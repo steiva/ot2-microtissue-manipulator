@@ -1,6 +1,8 @@
 import cv2
 import threading
 import numpy as np
+from configs import paths
+import json
 
 class CameraBufferCleanerThread(threading.Thread):
     def __init__(self, camera, name='camera-buffer-cleaner-thread'):
@@ -33,6 +35,12 @@ class Camera():
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT,1944)
         self.cap.set(cv2.CAP_PROP_FPS, 60)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc('M','J','P','G'))
+
+        with open(paths.CAMERA_INTRINSICS_PATH, 'r') as f:
+            camera_data = json.load(f)
+
+        self.camera_matrix = np.array(camera_data['camera_mtx'])
+        self.distortion_coefficients = np.array(camera_data['dist_coeffs'])
         self.no_buffer = no_buffer
 
         if self.no_buffer:
@@ -61,6 +69,8 @@ class Camera():
                 self.get_frame()
             if gray:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if undist:
+                frame = cv2.undistort(frame, self.camera_matrix, self.distortion_coefficients)
             return frame
         else:
             self.get_frame()
