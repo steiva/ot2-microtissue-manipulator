@@ -163,3 +163,4 @@ cython_debug/
 
 # Any configs that may be generated
 *.json
+outputs/
