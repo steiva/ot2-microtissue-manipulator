@@ -164,3 +164,7 @@ cython_debug/
 # Any configs that may be generated
 *.json
 outputs/
+
+# Any logs that may be generated
+*.log
+*.md
