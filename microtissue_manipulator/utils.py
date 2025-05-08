@@ -1,5 +1,5 @@
 import keyboard
-from configs import paths
+import paths
 import os
 import json
 import numpy as np
@@ -11,16 +11,6 @@ class ManualRobotMovement:
         self.possible_steps = [0.01, 0.1, 0.5, 1, 3, 5, 10, 30, 50]
         self.step = 1
 
-        # Register the key bindings
-        # keyboard.on_press_key('up', lambda _: self.move_forward())
-        # keyboard.on_press_key('down', lambda _: self.move_backward())
-        # keyboard.on_press_key('left', lambda _: self.move_left())
-        # keyboard.on_press_key('right', lambda _: self.move_right())
-        # keyboard.on_press_key('pagedown', lambda _: self.move_z_down())
-        # keyboard.on_press_key('pageup', lambda _: self.move_z_up())
-        # keyboard.on_press_key('+', lambda _: self.increase_step())
-        # keyboard.on_press_key('-', lambda _: self.decrease_step())
-        # keyboard.on_press_key('s', lambda _: self.save_position())
         keyboard.add_hotkey('up', self.move_forward)
         keyboard.add_hotkey('down', self.move_backward)
         keyboard.add_hotkey('left', self.move_left)
@@ -40,7 +30,7 @@ class ManualRobotMovement:
         can_move = False
         x_condition = x >=0 and x <= 380
         y_condition = y >=0 and y <= 350
-        z_condition = z >=0.1 and z <= 155
+        z_condition = z >=0.1 and z <= 205
 
         if x_condition and y_condition and z_condition:
             can_move = True

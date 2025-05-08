@@ -1,7 +1,7 @@
 import cv2
 import threading
 import numpy as np
-from configs import paths
+import paths
 import json
 import os
 from scipy.spatial import KDTree
