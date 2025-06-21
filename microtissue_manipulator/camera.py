@@ -7,6 +7,9 @@ from pygrabber.dshow_graph import FilterGraph
 import paths
 import json
 import os
+from dataclasses import dataclass
+from typing import Tuple, Dict, Any, Union
+import queue
 
 CAMERA_LABELS_FILE = paths.CAM_CONFIGS_DIR + "/camera_labels.json"
 CAMERA_CONFIG_DIR = paths.CAM_CONFIGS_DIR
@@ -285,3 +288,169 @@ class frameOperations():
             return cv2.undistort(frame, self.camera_matrix, self.distortion_coefficients, newCameraMatrix=self.new_camera_matrix)
         else:
             return cv2.undistort(frame, self.camera_matrix, self.distortion_coefficients)
+
+
+@dataclass
+class DisplayCommand:
+    """Commands that can be sent to the display process"""
+    command: str  # 'frame', 'annotation', 'status', 'quit'
+    data: Any = None
+    timestamp: float = None
+
+class FrameDisplayProcess:
+    """Separate process for handling OpenCV frame display"""
+    
+    def __init__(self, window_name="Robot Vision", window_size=(1348, 1011)):
+        self.window_name = window_name
+        self.window_size = window_size
+        self.frame_queue = mp.Queue(maxsize=5)  # Limit queue size to prevent memory buildup
+        self.command_queue = mp.Queue(maxsize=10)
+        self.status_queue = mp.Queue(maxsize=5)
+        self.process = None
+        self.running = False
+        
+    def start(self):
+        """Start the display process"""
+        if self.process is not None and self.process.is_alive():
+            print("Display process already running")
+            return
+            
+        self.running = True
+        self.process = mp.Process(target=self._display_worker, daemon=True)
+        self.process.start()
+        print(f"Display process started with PID: {self.process.pid}")
+        
+    def stop(self):
+        """Stop the display process"""
+        if self.process is None or not self.process.is_alive():
+            return
+            
+        self.running = False
+        try:
+            self.command_queue.put(DisplayCommand("quit"), timeout=1)
+            self.process.join(timeout=3)
+            if self.process.is_alive():
+                print("Force terminating display process...")
+                self.process.terminate()
+                self.process.join(timeout=1)
+        except Exception as e:
+            print(f"Error stopping display process: {e}")
+        finally:
+            self.process = None
+            
+    def send_frame(self, frame: np.ndarray, annotations: Dict[str, Any] = None):
+        """Send a frame to be displayed (non-blocking)"""
+        if not self.running or self.process is None or not self.process.is_alive():
+            return False
+            
+        try:
+            # Clear old frames to prevent lag
+            while not self.frame_queue.empty():
+                try:
+                    self.frame_queue.get_nowait()
+                except queue.Empty:
+                    break
+                    
+            frame_data = {
+                'frame': frame.copy(),
+                'annotations': annotations or {},
+                'timestamp': time.time()
+            }
+            self.frame_queue.put(frame_data, timeout=0.001)  # Very short timeout
+            return True
+        except queue.Full:
+            # Skip frame if queue is full (prevents blocking)
+            return False
+        except Exception as e:
+            print(f"Error sending frame: {e}")
+            return False
+            
+    def send_status(self, status_text: str, color=(0, 255, 0)):
+        """Send status text to be displayed"""
+        try:
+            status_data = {
+                'text': status_text,
+                'color': color,
+                'timestamp': time.time()
+            }
+            self.status_queue.put(status_data, timeout=0.001)
+        except queue.Full:
+            pass  # Skip if queue is full
+        except Exception as e:
+            print(f"Error sending status: {e}")
+            
+    def _display_worker(self):
+        """Worker function that runs in the separate process"""
+        try:
+            # Initialize OpenCV in the separate process
+            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.window_name, *self.window_size)
+            
+            current_frame = None
+            status_text = ""
+            status_color = (0, 255, 0)
+            last_frame_time = time.time()
+            
+            print(f"Display worker started in process {mp.current_process().pid}")
+            
+            while True:
+                try:
+                    # Check for quit command
+                    try:
+                        cmd = self.command_queue.get_nowait()
+                        if cmd.command == "quit":
+                            print("Display worker received quit command")
+                            break
+                    except queue.Empty:
+                        pass
+                    
+                    # Get latest frame (non-blocking)
+                    try:
+                        frame_data = self.frame_queue.get_nowait()
+                        current_frame = frame_data['frame']
+                        last_frame_time = time.time()
+                    except queue.Empty:
+                        pass
+                    
+                    # Get latest status (non-blocking)
+                    try:
+                        status_data = self.status_queue.get_nowait()
+                        status_text = status_data['text']
+                        status_color = status_data['color']
+                    except queue.Empty:
+                        pass
+                    
+                    # Display frame if available
+                    if current_frame is not None:
+                        display_frame = current_frame.copy()
+                        
+                        # Add status text overlay
+                        if status_text:
+                            cv2.putText(display_frame, status_text, (10, 30), 
+                                      cv2.FONT_HERSHEY_SIMPLEX, 1, status_color, 2)
+                        
+                        # Add timestamp if frame is old
+                        if time.time() - last_frame_time > 1.0:
+                            cv2.putText(display_frame, "NO NEW FRAMES", (10, 70), 
+                                      cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                        
+                        cv2.imshow(self.window_name, display_frame)
+                    
+                    # Handle OpenCV events
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == 27:  # ESC key
+                        print("ESC pressed in display window")
+                        break
+                        
+                    # Small delay to prevent high CPU usage
+                    time.sleep(0.01)
+                    
+                except Exception as e:
+                    print(f"Error in display worker: {e}")
+                    time.sleep(0.1)
+                    
+        except Exception as e:
+            print(f"Fatal error in display worker: {e}")
+        finally:
+            cv2.destroyAllWindows()
+            print("Display worker shutting down")
