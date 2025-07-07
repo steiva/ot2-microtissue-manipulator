@@ -1,0 +1,14 @@
+# PyQt6 for GUI
+PyQt6>=6.0.0
+
+# OpenCV for camera handling
+opencv-python>=4.5.0
+
+# NumPy for array operations
+numpy>=1.21.0
+
+# pygrabber for Windows camera detection
+pygrabber>=0.2.0
+
+# Additional dependencies that might be needed
+pathlib2>=2.3.0
