@@ -1,108 +1,243 @@
-import cv2
-import threading
-import numpy as np
-import paths
-import json
 import os
 from scipy.spatial import KDTree
+import numpy as np 
+import cv2
+import paths
+import datetime
+import string
 import pandas as pd
+from dataclasses import dataclass, fields, asdict, MISSING
+from typing import get_type_hints, get_origin, get_args, Any, Union
 
-class CameraBufferCleanerThread(threading.Thread):
-    def __init__(self, camera, name='camera-buffer-cleaner-thread'):
-        self.camera = camera
-        self.last_frame = None
-        super(CameraBufferCleanerThread, self).__init__(name=name)
-        self.start()
+class Destination:
+    WELL_PLATE_PRESETS = {
+        6: (2, 3),   # 2 rows × 3 cols
+        24: (4, 6),  # 4 rows × 6 cols
+        48: (6, 8),  # 6 rows × 8 cols
+        96: (8, 12),  # 8 rows × 12 cols
+        384: (16, 24)  # 16 rows × 24 cols
+    }
 
-    def run(self):
-        while True:
-            ret, frame = self.camera.read()
-            if ret:
-                self.last_frame = frame
+    def __init__(self, plate_type=None, custom_positions=None):
+        """
+        Defines a destination, which can be a standard well plate or custom locations.
 
-    def read(self):
-        if self.last_frame is not None:
-            return True, self.last_frame
-        else: 
-            return False, None
+        :param plate_type: Integer for a standard well plate (6, 24, 48, 96, 384).
+        :param custom_positions: List of arbitrary locations if not using a well plate.
+        """
+        self.plate_type = plate_type
+        self.layout = self.WELL_PLATE_PRESETS.get(plate_type, None)
+        self.custom_positions = custom_positions
+        self.positions = self.generate_positions()
+
+    def generate_positions(self):
+        """Generates well names based on plate type or uses custom positions."""
+        if self.custom_positions:
+            return self.custom_positions  # Use provided custom locations
         
-    def release(self):
-        self.camera.release()
+        if not self.layout:
+            raise ValueError("Invalid well plate type or missing custom positions.")
 
-class Camera():
-    def __init__(self, index = 0, config_profile = 'standardDeck', no_buffer = True, use_new_cam_mtx = False) -> None:
-        self.w, self.h = 2592, 1944
-        self.cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.w)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.h)
-        self.cap.set(cv2.CAP_PROP_FPS, 60)
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc('M','J','P','G'))
+        rows, cols = self.layout
+        row_labels = string.ascii_uppercase[:rows]  # First N letters for rows
+        return [f"{row}{col}" for row in row_labels for col in range(1, cols + 1)]
 
-        config_path = os.path.join(paths.PROFILES_DIR, config_profile, 'camera_intrinsics.json')
-        with open(config_path, 'r') as f:
-            camera_data = json.load(f)
+    def get_well_index(self, well_label):
+        """Returns the index of a well label like 'A1'."""
+        if well_label in self.positions:
+            return self.positions.index(well_label)
+        return None
 
-        self.camera_matrix = np.array(camera_data['camera_mtx'])
-        self.distortion_coefficients = np.array(camera_data['dist_coeffs'])
-        self.no_buffer = no_buffer
-        
-        if use_new_cam_mtx:
-            self.new_camera_matrix, _ = cv2.getOptimalNewCameraMatrix(self.camera_matrix, self.distortion_coefficients, (self.w, self.h), 1, (self.w, self.h))
-        else:
-            self.new_camera_matrix = None
+    def __repr__(self):
+        return f"Destination(plate_type={self.plate_type}, positions={self.positions})"
 
-        if self.no_buffer:
-            print('Using camera without buffer ...')
-            self.cap = CameraBufferCleanerThread(self.cap)
-        print('Camera initialized ...')
-        self.window_name = 'frame'
 
-    def get_frame(self, undist: bool = False, gray: bool = False) -> np.ndarray:
+class Routine:
+    def __init__(self, destination, well_plan, fill_strategy="well_by_well"):
         """
-        Function for reading frames from capture with direct undistortion
-        and settings for getting grayscale images directly.
+        Routine class for controlling how a well plate or location is filled.
 
-        Args:
-            undist (bool, optional): Boolean wether to undistort the image or not.
-            Defaults to True.
-            gray (bool, optional): Boolean wether to give grayscale images directly.
-            Defaults to True.
-
-        Returns:
-            np.ndarray: A captured frame represented by a numpy array.
+        :param destination: Destination object defining well plate/grid.
+        :param well_plan: Dictionary {well_label: target_count} defining objects per well.
+        :param fill_strategy: How the wells should be filled.
+                              Options: "vertical", "horizontal", "well_by_well", "spread_out"
         """
-        if self.cap.read() is not None:         
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                # self.get_frame()
-                print('Frame not captured ...')
-                return
-            if gray:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            if undist:
-                if self.new_camera_matrix is not None:
-                    frame = cv2.undistort(frame, self.camera_matrix, self.distortion_coefficients, None, self.new_camera_matrix)
-                else:
-                    frame = cv2.undistort(frame, self.camera_matrix, self.distortion_coefficients)
-            return frame
-        # else:
-        #     self.get_frame()
+        self.destination = destination
+        self.well_plan = well_plan  # {well_label: target_count}
+        self.fill_strategy = fill_strategy
+        self.filled_wells = {k: 0 for k in well_plan}
+        self.miss_counts = {k: 0 for k in well_plan}
+        self.completed = False
+        self.current_well = None
 
-    def get_window(self) -> None:
-        """
-        Function for opening a window that fits the screen properly
-        for 1920x1080 resolution monitor.
-        """        
-        cv2.namedWindow(self.window_name,  cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_name, 1348, 1011)
+    def get_fill_order(self):
+        """Returns the order in which wells should be filled based on strategy."""
+        wells = list(self.well_plan.keys())
 
-    def release_camera(self) -> None:
-        """
-        Release camera capture.
-        """        
-        print('Releasing capture ...')
-        self.cap.release()
+        if self.fill_strategy == "vertical":
+            return sorted(wells, key=lambda well: int(well[1:]))  # Sort by column number
+        elif self.fill_strategy == "horizontal":
+            return sorted(wells, key=lambda well: well[0])  # Sort by row letter
+        elif self.fill_strategy == "spread_out":
+            return sorted(wells, key=lambda well: self.well_plan[well])  # Spread out based on needs
+        else:  # Default: well_by_well
+            return wells
 
+    def get_next_well(self):
+        """Returns the next well to be filled based on the strategy."""
+        for well in self.get_fill_order():
+            if self.filled_wells[well] < self.well_plan[well]:
+                self.current_well = well
+                return well
+        self.completed = True
+        return None
+
+    def update_well(self, success=True):
+        """Updates well status after an attempt."""
+        if self.current_well is not None:
+            if success:
+                self.filled_wells[self.current_well] += 1
+            else:
+                self.miss_counts[self.current_well] += 1
+
+    def is_done(self):
+        """Checks if routine is completed."""
+        return self.completed
+
+def create_well_plan(plate_type):
+    """Creates an empty DataFrame for well input based on the plate size."""
+    rows, cols = Destination.WELL_PLATE_PRESETS[plate_type]
+    row_labels = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"[:rows])
+    col_labels = list(range(1, cols + 1))
+
+    well_df = pd.DataFrame(np.zeros((rows, cols), dtype=int), index=row_labels, columns=col_labels)
+    return well_df
+
+def is_instance_of_type(value: Any, expected_type: Any) -> bool:
+    origin = get_origin(expected_type)
+    args = get_args(expected_type)
+
+    if origin is None:
+        return isinstance(value, expected_type)
+
+    if origin is Union:
+        return any(is_instance_of_type(value, arg) for arg in args)
+
+    if origin is tuple:
+        if len(args) == 2 and args[1] is ...:  # Tuple[int, ...]
+            return isinstance(value, tuple) and all(is_instance_of_type(v, args[0]) for v in value)
+        return (
+            isinstance(value, tuple)
+            and len(value) == len(args)
+            and all(is_instance_of_type(v, t) for v, t in zip(value, args))
+        )
+
+    if origin is list:
+        return isinstance(value, list) and all(is_instance_of_type(v, args[0]) for v in value)
+
+    if origin is dict:
+        return (
+            isinstance(value, dict)
+            and all(is_instance_of_type(k, args[0]) and is_instance_of_type(v, args[1]) for k, v in value.items())
+        )
+
+    return isinstance(value, expected_type)
+
+class MarkdownLogger:
+    def __init__(self, log_dir=paths.LOGS_DIR, experiment_name=None, settings: dict = None, well_plate: pd.DataFrame = None):
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        if experiment_name is None:
+            experiment_name = f"experiment_{timestamp}"
+        self.log_file = os.path.join(log_dir, f"{experiment_name}_log_{timestamp}.md")
+        self._start_log(experiment_name, settings, well_plate)
+
+    def _start_log(self, experiment_name, settings, well_plate):
+        with open(self.log_file, 'w') as f:
+            f.write(f"# Log for {experiment_name}\n")
+            f.write(f"_Started on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_\n\n")
+            
+            if settings:
+                f.write("## Settings\n\n")
+                f.write("| Key | Value |\n")
+                f.write("| --- | ----- |\n")
+                for key, value in settings.items():
+                    f.write(f"| `{key}` | `{value}` |\n")
+                f.write("\n")
+
+            if well_plate is not None:
+                f.write("## Well Plate Plan\n\n")
+                f.write(well_plate.to_markdown(index=True))
+                f.write("\n\n")
+
+    def log_table(self, df: pd.DataFrame, title: str = "Table"):
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(self.log_file, 'a') as f:
+            f.write(f"- **[{timestamp}]** {title}\n\n")
+            f.write(df.to_markdown(index=False) + '\n\n')
+
+    def log(self, message):
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(self.log_file, 'a') as f:
+            f.write(f"- **[{timestamp}]** {message}\n")
+
+    def log_section(self, title):
+        with open(self.log_file, 'a') as f:
+            f.write(f"\n## {title}\n\n")
+
+@dataclass
+class PickingConfig:
+    vol: float = 10.0
+    dish_bottom: float = 66.1 #10.60 for 300ul, 9.5 for 200ul
+    pickup_offset: float = 0.5
+    pickup_height: float = dish_bottom + pickup_offset
+    flow_rate: float = 50.0
+    cuboid_size_theshold: tuple[int, int] = (250, 500)
+    failure_threshold: float = 0.5
+    minimum_distance: float = 1.7
+    wait_time_after_deposit: float = 0.5
+    one_by_one: bool = False
+
+    # ----------------------Deposit configs-----------------------
+    well_offset_x: float = -0.3 #384 well plate
+    well_offset_y: float = -0.9 #384 well plate
+    deposit_offset_z: float = 0.5
+    destination_slot: int = 5
+
+    # ----------------------Video configs-----------------------
+    circle_center: tuple[int, int] = (1296, 972)
+    circle_radius: int = 900
+    contour_filter_window: tuple[int, int] = (30, 1000)  # min and max area for contour filtering
+    aspect_ratio_window: tuple[float, float] = (0.75, 1.25)  # min and max aspect ratio for contour filtering
+    circularity_window: tuple[float, float] = (0.6, 0.9)  # circularity range for contour filtering
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PickingConfig":
+        type_hints = get_type_hints(cls)
+        init_args = {}
+
+        for f in fields(cls):
+            name = f.name
+            if name in data:
+                value = data[name]
+            elif f.default is not MISSING:
+                value = f.default
+            else:
+                raise ValueError(f"Missing required field: {name}")
+
+            expected_type = type_hints[name]
+            if not is_instance_of_type(value, expected_type):
+                raise TypeError(f"Field '{name}' is expected to be {expected_type}, got {type(value)}")
+
+            init_args[name] = value
+
+        # Recalculate pickup_height after loading
+        obj = cls(**init_args)
+        obj.pickup_height = obj.dish_bottom + obj.pickup_offset
+        return obj
+
+    def to_dict(self):
+        return asdict(self)
 
 class Core():
     def __init__(self) -> None:
@@ -187,22 +322,6 @@ class Core():
             curr_center = np.array([a, b])
             if np.sqrt(np.sum((best_center - curr_center)**2)) > 30:
                 self.best_circ = pt
-
-    # def size_conversion(self, cuboid_size_px: float) -> float:
-    #     """Size conversion from pixels to microns and then to 
-    #     cuboid diameter. In this calculation, cuboids are assumed to 
-    #     look circular. If we regard the cuboids as squares (top down view),
-    #     just a square root of cuboid_size_micron2 should be sufficient.
-
-    #     Args:
-    #         cuboid_size_px (float): cuboid size in pixels as seen by the camera.
-
-    #     Returns:
-    #         float: cuboid diameter in microns.
-    #     """    
-    #     cuboid_size_micron2 = cuboid_size_px * self.size_conversion_ratio * 1000000
-    #     cuboid_diameter = 2 * np.sqrt(cuboid_size_micron2 / np.pi)
-    #     return cuboid_diameter
 
     def contour_aspect_ratio(self, contour: np.ndarray) -> float:
         """
