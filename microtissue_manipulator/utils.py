@@ -112,6 +112,7 @@ def check_calibration_config(profile_name):
             "camera_coords": [],  # List of camera coordinates
             "tf_mtx": [],  # Transformation matrix
             "calib_origin": [],  # Calibration origin
+            "tip_calib_origin": [],  # Tip calibration origin
             "offset": [],
             "size_conversion_ratio": 1.0,
             "one_d_ratio": 1.0

@@ -333,7 +333,8 @@ class Core():
         Returns:
             float: The aspect ratio of the contour.
         """
-        x, y, w, h = cv2.boundingRect(contour)
+        w,h = cv2.minAreaRect(contour)[1]
+        # x, y, w, h = cv2.boundingRect(contour)
         aspect_ratio = float(w) / h
         return aspect_ratio
     
