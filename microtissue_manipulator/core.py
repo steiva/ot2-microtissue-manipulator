@@ -15,7 +15,8 @@ class Destination:
         24: (4, 6),  # 4 rows × 6 cols
         48: (6, 8),  # 6 rows × 8 cols
         96: (8, 12),  # 8 rows × 12 cols
-        384: (16, 24)  # 16 rows × 24 cols
+        384: (16, 24),  # 16 rows × 24 cols
+        1536: (32, 48)  # 32 rows × 48 cols
     }
 
     def __init__(self, plate_type=None, custom_positions=None):
@@ -107,7 +108,7 @@ class Routine:
 def create_well_plan(plate_type):
     """Creates an empty DataFrame for well input based on the plate size."""
     rows, cols = Destination.WELL_PLATE_PRESETS[plate_type]
-    row_labels = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"[:rows])
+    row_labels = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`"[:rows])
     col_labels = list(range(1, cols + 1))
 
     well_df = pd.DataFrame(np.zeros((rows, cols), dtype=int), index=row_labels, columns=col_labels)
