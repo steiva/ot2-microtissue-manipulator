@@ -52,58 +52,173 @@ class Destination:
     def __repr__(self):
         return f"Destination(plate_type={self.plate_type}, positions={self.positions})"
 
-
-class Routine:
-    def __init__(self, destination, well_plan, fill_strategy="well_by_well"):
+class RoutineBase:
+    """Base class for managing filling operations."""
+    
+    def __init__(self, plan: dict):
         """
-        Routine class for controlling how a well plate or location is filled.
-
-        :param destination: Destination object defining well plate/grid.
-        :param well_plan: Dictionary {well_label: target_count} defining objects per well.
-        :param fill_strategy: How the wells should be filled.
-                              Options: "vertical", "horizontal", "well_by_well", "spread_out"
+        :param plan: Dictionary {item: target_count} 
         """
-        self.destination = destination
-        self.well_plan = well_plan  # {well_label: target_count}
-        self.fill_strategy = fill_strategy
-        self.filled_wells = {k: 0 for k in well_plan}
-        self.miss_counts = {k: 0 for k in well_plan}
+        self.plan = plan
+        self.filled = {item: 0 for item in plan}
+        self.miss_counts = {item: 0 for item in plan}
         self.completed = False
-        self.current_well = None
+        self.current_item = None
 
-    def get_fill_order(self):
-        """Returns the order in which wells should be filled based on strategy."""
-        wells = list(self.well_plan.keys())
+    def get_order(self):
+        """Override in subclasses to define ordering strategy."""
+        return list(self.plan.keys())
 
-        if self.fill_strategy == "vertical":
-            return sorted(wells, key=lambda well: int(well[1:]))  # Sort by column number
-        elif self.fill_strategy == "horizontal":
-            return sorted(wells, key=lambda well: well[0])  # Sort by row letter
-        elif self.fill_strategy == "spread_out":
-            return sorted(wells, key=lambda well: self.well_plan[well])  # Spread out based on needs
-        else:  # Default: well_by_well
-            return wells
-
-    def get_next_well(self):
-        """Returns the next well to be filled based on the strategy."""
-        for well in self.get_fill_order():
-            if self.filled_wells[well] < self.well_plan[well]:
-                self.current_well = well
-                return well
+    def get_next(self):
+        """Returns next item to be filled."""
+        for item in self.get_order():
+            if self.filled[item] < self.plan[item]:
+                self.current_item = item
+                return item
         self.completed = True
         return None
 
-    def update_well(self, success=True):
-        """Updates well status after an attempt."""
-        if self.current_well is not None:
+    def update(self, success=True):
+        """Updates item status after attempt."""
+        if self.current_item is not None:
             if success:
-                self.filled_wells[self.current_well] += 1
+                self.filled[self.current_item] += 1
             else:
-                self.miss_counts[self.current_well] += 1
+                self.miss_counts[self.current_item] += 1
 
     def is_done(self):
         """Checks if routine is completed."""
         return self.completed
+
+
+class Routine(RoutineBase):
+    """Well plate filling routine with strategies."""
+    
+    def __init__(self, destination, well_plan, fill_strategy="well_by_well"):
+        super().__init__(well_plan)
+        self.routine_type = "well_plate"
+        self.destination = destination
+        self.fill_strategy = fill_strategy
+
+    def get_order(self):
+        """Returns ordered wells based on strategy."""
+        wells = list(self.plan.keys())
+        if self.fill_strategy == "vertical":
+            return sorted(wells, key=lambda w: int(w[1:]))
+        elif self.fill_strategy == "horizontal":
+            return sorted(wells, key=lambda w: w[0])
+        elif self.fill_strategy == "spread_out":
+            return sorted(wells, key=lambda w: self.plan[w])
+        else:
+            return wells
+
+    # def get_next_well(self):
+    #     return self.get_next()
+
+    # def update_well(self, success=True):
+    #     return self.update(success)
+
+
+class CoordinateRoutine(RoutineBase):
+    """Coordinate-based filling routine."""
+    
+    def __init__(self, coordinate_plan):
+        super().__init__(coordinate_plan)
+        self.routine_type = "coordinate"
+
+    # def get_next_coordinate(self):
+    #     return self.get_next()
+
+    # def update_coordinate(self, success=True):
+    #     return self.update(success)
+
+# class CoordinateRoutine:
+#     def __init__(self, coordinate_plan):
+#         """
+#         Routine class for controlling how arbitrary coordinates are filled.
+
+#         :param coordinate_plan: List of (x, y) tuples defining target coordinates.
+#         """
+#         self.routine_type = "coordinate"
+#         self.coordinate_plan = coordinate_plan
+#         self.filled_coordinates = {coord: 0 for coord in coordinate_plan}  # Track how many times each coordinate has been filled
+#         self.miss_counts = {coord: 0 for coord in coordinate_plan}
+#         self.completed = False
+#         self.current_coordinate = None
+
+#     def get_next_coordinate(self):
+#         """Returns the next coordinate to be filled."""
+#         for coord in self.coordinate_plan:
+#             if self.filled_coordinates[coord] < self.coordinate_plan[coord]:  # Assuming each coordinate should be filled once
+#                 self.current_coordinate = coord
+#                 return coord
+#         self.completed = True
+#         return None
+    
+#     def update_coordinate(self, success=True):
+#         """Updates coordinate status after an attempt."""
+#         if self.current_coordinate is not None:
+#             if success:
+#                 self.filled_coordinates[self.current_coordinate] += 1
+#             else:
+#                 self.miss_counts[self.current_coordinate] += 1
+
+#     def is_done(self):
+#         """Checks if routine is completed."""
+#         return self.completed
+
+# class Routine:
+#     def __init__(self, destination, well_plan, fill_strategy="well_by_well"):
+#         """
+#         Routine class for controlling how a well plate or location is filled.
+
+#         :param destination: Destination object defining well plate/grid.
+#         :param well_plan: Dictionary {well_label: target_count} defining objects per well.
+#         :param fill_strategy: How the wells should be filled.
+#                               Options: "vertical", "horizontal", "well_by_well", "spread_out"
+#         """
+#         self.routine_type = "well_plate"
+#         self.destination = destination
+#         self.well_plan = well_plan  # {well_label: target_count}
+#         self.fill_strategy = fill_strategy
+#         self.filled_wells = {k: 0 for k in well_plan}
+#         self.miss_counts = {k: 0 for k in well_plan}
+#         self.completed = False
+#         self.current_well = None
+
+#     def get_fill_order(self):
+#         """Returns the order in which wells should be filled based on strategy."""
+#         wells = list(self.well_plan.keys())
+
+#         if self.fill_strategy == "vertical":
+#             return sorted(wells, key=lambda well: int(well[1:]))  # Sort by column number
+#         elif self.fill_strategy == "horizontal":
+#             return sorted(wells, key=lambda well: well[0])  # Sort by row letter
+#         elif self.fill_strategy == "spread_out":
+#             return sorted(wells, key=lambda well: self.well_plan[well])  # Spread out based on needs
+#         else:  # Default: well_by_well
+#             return wells
+
+#     def get_next_well(self):
+#         """Returns the next well to be filled based on the strategy."""
+#         for well in self.get_fill_order():
+#             if self.filled_wells[well] < self.well_plan[well]:
+#                 self.current_well = well
+#                 return well
+#         self.completed = True
+#         return None
+
+#     def update_well(self, success=True):
+#         """Updates well status after an attempt."""
+#         if self.current_well is not None:
+#             if success:
+#                 self.filled_wells[self.current_well] += 1
+#             else:
+#                 self.miss_counts[self.current_well] += 1
+
+#     def is_done(self):
+#         """Checks if routine is completed."""
+#         return self.completed
 
 def create_well_plan(plate_type):
     """Creates an empty DataFrame for well input based on the plate size."""
@@ -204,6 +319,7 @@ class PickingConfig:
     well_offset_y: float = -0.9 #384 well plate
     deposit_offset_z: float = 0.5
     destination_slot: int = 5
+    deposit_z_optional: float = 67.0
 
     # ----------------------Video configs-----------------------
     circle_center: tuple[int, int] = (1296, 972)

@@ -30,7 +30,7 @@ class ManualRobotMovement:
         can_move = False
         x_condition = x >=0 and x <= 380
         y_condition = y >=0 and y <= 350
-        z_condition = z >=0.1 and z <= 205
+        z_condition = z >=0.1 and z <= 150
 
         if x_condition and y_condition and z_condition:
             can_move = True
@@ -90,6 +90,12 @@ class ManualRobotMovement:
         position = self.openapi.get_position(verbose = False)[0]
         self.positions.append((position['x'], position['y'], position['z']))
         print(f"Saved position: {position}")
+
+def discard_tip(openapi):
+    openapi.retract_axis('leftZ')
+    x,y,z = openapi.get_position(verbose=False)[0].values()
+    openapi.move_to_coordinates((350, 350, z - 1), verbose=False)
+    openapi.drop_tip_in_place()
 
 def create_configuration_profile(profile_name):
     profile_path = os.path.join(paths.PROFILES_DIR, profile_name)
