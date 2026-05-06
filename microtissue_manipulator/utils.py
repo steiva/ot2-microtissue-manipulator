@@ -8,7 +8,7 @@ class ManualRobotMovement:
     def __init__(self, openapi, block_thread = False):
         self.openapi = openapi
         self.positions = []
-        self.possible_steps = [0.01, 0.1, 0.5, 1, 3, 5, 10, 30, 50]
+        self.possible_steps = [0.01, 0.05, 0.1, 0.5, 1, 3, 5, 10, 30, 50]
         self.step = 1
 
         keyboard.add_hotkey('up', self.move_forward)
